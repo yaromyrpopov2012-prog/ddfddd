@@ -746,148 +746,140 @@ struct FileBrowserView: View {
             }
             ToolbarItem(placement: .topBarTrailing) {
                 Menu {
-                    if CoreMediaITunesPathReader.containsVirtualPath(path) {
-                        Button {
-                            showFileImporter = true
-                        } label: {
-                            Label("Import File", systemImage: "arrow.down.doc")
-                        }
-                    } else {
-                        if !isContainer && !effectiveReadOnly {
-                            Menu {
-                                Button {
-                                    Alertinator.shared.prompt(title: "What would you like to call your new file? Make sure you attach an extension at the end.", placeholder: "new.txt", completion: { name in
-                                        let name = name ?? ""
-                                        guard !name.isEmpty else { return }
-                                        if hasAirliftWriteContext && !remoteMutationAllowed() {
-                                            Alertinator.shared.alert(title: "Airlift write unavailable", body: "Enable LocalDevVPN and make sure the pairing file is imported.")
-                                            return
-                                        }
-                                        let fileURL = path.appendingPathComponent(name)
-                                        do {
-                                            try Data().write(to: fileURL)
-                                        } catch {
-                                            Alertinator.shared.alert(title: "Failed to create file!", body: error.localizedDescription)
-                                            return
-                                        }
-                                        guard let remotePath = remotePath(for: fileURL) else {
-                                            mgr.refreshFiles.toggle()
-                                            return
-                                        }
-                                        Task {
-                                            let ok = await AirliftBridge.shared.writeBack(localURL: fileURL, remotePath: remotePath)
-                                            await MainActor.run {
-                                                if ok {
-                                                    mgr.refreshFiles.toggle()
-                                                } else {
-                                                    try? fm.removeItem(at: fileURL)
-                                                    Alertinator.shared.alert(title: "Failed to create file!", body: "The remote Airlift write failed. Check the Airlift log.")
-                                                }
+                    if !isContainer && !effectiveReadOnly {
+                        Menu {
+                            Button {
+                                Alertinator.shared.prompt(title: "What would you like to call your new file? Make sure you attach an extension at the end.", placeholder: "new.txt", completion: { name in
+                                    let name = name ?? ""
+                                    guard !name.isEmpty else { return }
+                                    if hasAirliftWriteContext && !remoteMutationAllowed() {
+                                        Alertinator.shared.alert(title: "Airlift write unavailable", body: "Enable LocalDevVPN and make sure the pairing file is imported.")
+                                        return
+                                    }
+                                    let fileURL = path.appendingPathComponent(name)
+                                    do {
+                                        try Data().write(to: fileURL)
+                                    } catch {
+                                        Alertinator.shared.alert(title: "Failed to create file!", body: error.localizedDescription)
+                                        return
+                                    }
+                                    guard let remotePath = remotePath(for: fileURL) else {
+                                        mgr.refreshFiles.toggle()
+                                        return
+                                    }
+                                    Task {
+                                        let ok = await AirliftBridge.shared.writeBack(localURL: fileURL, remotePath: remotePath)
+                                        await MainActor.run {
+                                            if ok {
+                                                mgr.refreshFiles.toggle()
+                                            } else {
+                                                try? fm.removeItem(at: fileURL)
+                                                Alertinator.shared.alert(title: "Failed to create file!", body: "The remote Airlift write failed. Check the Airlift log.")
                                             }
                                         }
-                                    })
-                                } label: {
-                                    Label("File", systemImage: "doc")
-                                }
-
-                                Button {
-                                    Alertinator.shared.prompt(title: "What would you like to call your new property list?", placeholder: "Plist Name", completion: { name in
-                                        let name = name ?? ""
-                                        guard !name.isEmpty else { return }
-                                        if hasAirliftWriteContext && !remoteMutationAllowed() {
-                                            Alertinator.shared.alert(title: "Airlift write unavailable", body: "Enable LocalDevVPN and make sure the pairing file is imported.")
-                                            return
-                                        }
-                                        let fileURL = path.appendingPathComponent(name + ".plist")
-                                        do {
-                                            let data = try PropertyListSerialization.data(fromPropertyList: NSMutableDictionary(), format: .xml, options: 0)
-                                            try data.write(to: fileURL)
-                                        } catch {
-                                            Alertinator.shared.alert(title: "Failed to create property list!", body: error.localizedDescription)
-                                            return
-                                        }
-                                        guard let remotePath = remotePath(for: fileURL) else {
-                                            mgr.refreshFiles.toggle()
-                                            return
-                                        }
-                                        Task {
-                                            let ok = await AirliftBridge.shared.writeBack(localURL: fileURL, remotePath: remotePath)
-                                            await MainActor.run {
-                                                if ok {
-                                                    mgr.refreshFiles.toggle()
-                                                } else {
-                                                    try? fm.removeItem(at: fileURL)
-                                                    Alertinator.shared.alert(title: "Failed to create property list!", body: "The remote Airlift write failed. Check the Airlift log.")
-                                                }
-                                            }
-                                        }
-                                    })
-                                } label: {
-                                    Label("Property List", systemImage: "tablecells")
-                                }
-
-                                Button {
-                                    Alertinator.shared.prompt(title: "What would you like to call your new folder?", placeholder: "Folder Name", completion: { name in
-                                        let name = name ?? ""
-                                        guard !name.isEmpty else { return }
-                                        if hasAirliftWriteContext && !remoteMutationAllowed() {
-                                            Alertinator.shared.alert(title: "Airlift write unavailable", body: "Enable LocalDevVPN and make sure the pairing file is imported.")
-                                            return
-                                        }
-                                        let folderURL = path.appendingPathComponent(name, isDirectory: true)
-                                        do {
-                                            try fm.createDirectory(at: folderURL, withIntermediateDirectories: false)
-                                        } catch {
-                                            Alertinator.shared.alert(title: "Failed to create folder!", body: error.localizedDescription)
-                                            return
-                                        }
-                                        guard let remotePath = remotePath(for: folderURL) else {
-                                            mgr.refreshFiles.toggle()
-                                            return
-                                        }
-                                        Task {
-                                            let ok = await AirliftBridge.shared.createRemoteDirectory(localURL: folderURL, remotePath: remotePath)
-                                            await MainActor.run {
-                                                if ok {
-                                                    mgr.refreshFiles.toggle()
-                                                } else {
-                                                    try? fm.removeItem(at: folderURL)
-                                                    Alertinator.shared.alert(title: "Failed to create folder!", body: "The remote Airlift directory creation failed. Check the Airlift log.")
-                                                }
-                                            }
-                                        }
-                                    })
-                                } label: {
-                                    Label("Folder", systemImage: "folder")
-                                }
-
-                                Button {
-                                    Alertinator.shared.prompt(title: "Where would you like your new symlink to point to?", placeholder: "/path/to/dir", completion: { symPath in
-                                        let symPath = symPath ?? ""
-                                        guard !symPath.isEmpty else { return }
-                                        if hasAirliftWriteContext {
-                                            Alertinator.shared.alert(title: "Symlink write unavailable", body: "The current Airlift write API does not preserve a new symbolic link, so no local or remote change was made.")
-                                            return
-                                        }
-                                        do {
-                                            try fm.createSymbolicLink(atPath: path.appendingPathComponent(URL(fileURLWithPath: symPath).lastPathComponent).path, withDestinationPath: symPath)
-                                            mgr.refreshFiles.toggle()
-                                        } catch {
-                                            Alertinator.shared.alert(title: "Failed to create symlink!", body: error.localizedDescription)
-                                        }
-                                    })
-                                } label: {
-                                    Label("Symlink", systemImage: "arrow.up.right.circle")
-                                }
+                                    }
+                                })
                             } label: {
-                                Label("New...", systemImage: "plus")
+                                Label("File", systemImage: "doc")
                             }
 
                             Button {
-                                showFileImporter.toggle()
+                                Alertinator.shared.prompt(title: "What would you like to call your new property list?", placeholder: "Plist Name", completion: { name in
+                                    let name = name ?? ""
+                                    guard !name.isEmpty else { return }
+                                    if hasAirliftWriteContext && !remoteMutationAllowed() {
+                                        Alertinator.shared.alert(title: "Airlift write unavailable", body: "Enable LocalDevVPN and make sure the pairing file is imported.")
+                                        return
+                                    }
+                                    let fileURL = path.appendingPathComponent(name + ".plist")
+                                    do {
+                                        let data = try PropertyListSerialization.data(fromPropertyList: NSMutableDictionary(), format: .xml, options: 0)
+                                        try data.write(to: fileURL)
+                                    } catch {
+                                        Alertinator.shared.alert(title: "Failed to create property list!", body: error.localizedDescription)
+                                        return
+                                    }
+                                    guard let remotePath = remotePath(for: fileURL) else {
+                                        mgr.refreshFiles.toggle()
+                                        return
+                                    }
+                                    Task {
+                                        let ok = await AirliftBridge.shared.writeBack(localURL: fileURL, remotePath: remotePath)
+                                        await MainActor.run {
+                                            if ok {
+                                                mgr.refreshFiles.toggle()
+                                            } else {
+                                                try? fm.removeItem(at: fileURL)
+                                                Alertinator.shared.alert(title: "Failed to create property list!", body: "The remote Airlift write failed. Check the Airlift log.")
+                                            }
+                                        }
+                                    }
+                                })
                             } label: {
-                                Label("Import File", systemImage: "arrow.down.doc")
+                                Label("Property List", systemImage: "tablecells")
                             }
+
+                            Button {
+                                Alertinator.shared.prompt(title: "What would you like to call your new folder?", placeholder: "Folder Name", completion: { name in
+                                    let name = name ?? ""
+                                    guard !name.isEmpty else { return }
+                                    if hasAirliftWriteContext && !remoteMutationAllowed() {
+                                        Alertinator.shared.alert(title: "Airlift write unavailable", body: "Enable LocalDevVPN and make sure the pairing file is imported.")
+                                        return
+                                    }
+                                    let folderURL = path.appendingPathComponent(name, isDirectory: true)
+                                    do {
+                                        try fm.createDirectory(at: folderURL, withIntermediateDirectories: false)
+                                    } catch {
+                                        Alertinator.shared.alert(title: "Failed to create folder!", body: error.localizedDescription)
+                                        return
+                                    }
+                                    guard let remotePath = remotePath(for: folderURL) else {
+                                        mgr.refreshFiles.toggle()
+                                        return
+                                    }
+                                    Task {
+                                        let ok = await AirliftBridge.shared.createRemoteDirectory(localURL: folderURL, remotePath: remotePath)
+                                        await MainActor.run {
+                                            if ok {
+                                                mgr.refreshFiles.toggle()
+                                            } else {
+                                                try? fm.removeItem(at: folderURL)
+                                                Alertinator.shared.alert(title: "Failed to create folder!", body: "The remote Airlift directory creation failed. Check the Airlift log.")
+                                            }
+                                        }
+                                    }
+                                })
+                            } label: {
+                                Label("Folder", systemImage: "folder")
+                            }
+
+                            Button {
+                                Alertinator.shared.prompt(title: "Where would you like your new symlink to point to?", placeholder: "/path/to/dir", completion: { symPath in
+                                    let symPath = symPath ?? ""
+                                    guard !symPath.isEmpty else { return }
+                                    if hasAirliftWriteContext {
+                                        Alertinator.shared.alert(title: "Symlink write unavailable", body: "The current Airlift write API does not preserve a new symbolic link, so no local or remote change was made.")
+                                        return
+                                    }
+                                    do {
+                                        try fm.createSymbolicLink(atPath: path.appendingPathComponent(URL(fileURLWithPath: symPath).lastPathComponent).path, withDestinationPath: symPath)
+                                        mgr.refreshFiles.toggle()
+                                    } catch {
+                                        Alertinator.shared.alert(title: "Failed to create symlink!", body: error.localizedDescription)
+                                    }
+                                })
+                            } label: {
+                                Label("Symlink", systemImage: "arrow.up.right.circle")
+                            }
+                        } label: {
+                            Label("New...", systemImage: "plus")
+                        }
+
+                        Button {
+                            showFileImporter.toggle()
+                        } label: {
+                            Label("Import File", systemImage: "arrow.down.doc")
                         }
                     }
                 Divider()
@@ -1196,65 +1188,10 @@ struct FileBrowserView: View {
         return sortedFiles
     }
     
-    // MARK: CoreMedia CVE iTunes import
-    private func handleITunesCVEImport(_ sourceURL: URL) {
-        let scopedAccess = sourceURL.startAccessingSecurityScopedResource()
-        Task { @MainActor in
-            defer {
-                if scopedAccess { sourceURL.stopAccessingSecurityScopedResource() }
-            }
-
-            let name = sourceURL.lastPathComponent
-            guard !name.isEmpty, name != ".", name != "..", !name.contains("/") else {
-                Alertinator.shared.alert(title: "Import failed", body: "The selected item has an invalid name.")
-                return
-            }
-            let isDirectory = (try? sourceURL.resourceValues(forKeys: [.isDirectoryKey]).isDirectory) ?? false
-            guard !isDirectory else {
-                Alertinator.shared.alert(
-                    title: "Folder import unavailable",
-                    body: "The CVE experiment currently attempts create-only writes for individual files. Folder import is not implemented."
-                )
-                return
-            }
-
-            let targetURL = path.appendingPathComponent(name)
-            guard CoreMediaITunesPathReader.containsVirtualPath(targetURL) else {
-                Alertinator.shared.alert(title: "Import blocked", body: "The target is outside the configured iTunes directory.")
-                return
-            }
-            guard !unfilteredFiles.contains(where: { $0.name == name }) else {
-                Alertinator.shared.alert(title: "Import blocked", body: "An item with this name already exists. Existing device files are never overwritten by this test.")
-                return
-            }
-
-            do {
-                let data = try await Task.detached(priority: .userInitiated) {
-                    try Data(contentsOf: sourceURL, options: .mappedIfSafe)
-                }.value
-                try await Task.detached(priority: .userInitiated) {
-                    try CoreMediaITunesPathReader.attemptWriteNewFile(atPath: targetURL.path, data: data)
-                }.value
-                mgr.refreshFiles.toggle()
-                Alertinator.shared.alert(title: "CVE write succeeded", body: "CoreMedia returned a writable descriptor and the file was written: \(name)")
-            } catch {
-                Alertinator.shared.alert(
-                    title: "CVE write attempt failed",
-                    body: error.localizedDescription
-                )
-            }
-        }
-    }
-
     // MARK: handle import
     private func handleImport(_ result: Result<URL, Error>) {
         switch result {
         case .success(let fileURL):
-            if CoreMediaITunesPathReader.containsVirtualPath(path) {
-                handleITunesCVEImport(fileURL)
-                return
-            }
-
             let stopAccess = fileURL.startAccessingSecurityScopedResource()
             defer {
                 if stopAccess { fileURL.stopAccessingSecurityScopedResource() }
