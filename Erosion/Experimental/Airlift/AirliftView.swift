@@ -596,30 +596,12 @@ private struct AirliftReadFileView: View {
             } else if conformsToTextViewer(localURL) {
                 TextViewer(localURL, remotePath: remotePath)
             } else {
-                QuickLookAirliftFileView(url: localURL)
+                QuickLookDirectPreview(url: localURL)
             }
         }
     }
 }
 
-private struct QuickLookAirliftFileView: View {
-    let url: URL
-    @Environment(\.dismiss) private var dismiss
-    @State private var previewURL: URL?
-    var body: some View {
-        VStack(spacing: 16) {
-            Image(systemName: "doc.text.magnifyingglass").font(.largeTitle)
-            Text(url.lastPathComponent).font(.headline)
-            Text("Read-only snapshot").foregroundStyle(.secondary)
-            Button { previewURL = url } label: { Label("Preview", systemImage: "eye") }
-            ShareLink(item: url) { Label("Share / Export", systemImage: "square.and.arrow.up") }
-        }
-        .padding()
-        .toolbar { ToolbarItem(placement: .topBarTrailing) { Button("Close") { dismiss() } } }
-        .quickLookPreview($previewURL)
-        .onAppear { previewURL = url }
-    }
-}
 
 private struct AirliftNoteView: View {
     @Environment(\.dismiss) private var dismiss
