@@ -10,8 +10,8 @@ enum CoreMediaUsrLibexecReader {
     static let remotePath = "/usr/libexec"
 
     private static let sessionLock = NSRecursiveLock()
-    // One process-lifetime CoreMedia/XPC session is shared by /usr/libexec, the
-    // two virtual /Library roots, and iTunes read/write probing. It is lazy.
+    // One process-lifetime CoreMedia/XPC session is shared by /usr/libexec and
+    // the two virtual /Library roots. It is lazy.
     private static var reusableSession: CoreMediaSession?
     // A transport failure permanently invalidates this process-lifetime session.
     // Keep the object retained rather than releasing the XPC connection during
@@ -19,8 +19,7 @@ enum CoreMediaUsrLibexecReader {
     private static var sharedSessionPermanentlyFailed = false
     private static let additionalSharedRoots = [
         "/Library/Ringtones",
-        "/Library/RegionFeatures",
-        "/private/var/mobile/Media/iTunes_Control/iTunes"
+        "/Library/RegionFeatures"
     ]
     private static let snapshotCondition = NSCondition()
     private static var snapshotAttempted = false
@@ -318,7 +317,7 @@ enum CoreMediaUsrLibexecReader {
     }
 
     /// Lists a directory through the single shared CoreMedia session. This is
-    /// used by /usr/libexec, the virtual /Library roots, and iTunes reads.
+    /// used by /usr/libexec and the virtual /Library roots.
     static func listDirectoryUsingSharedSession(
         at path: String,
         probeRegularFiles: Bool = true
@@ -335,29 +334,12 @@ enum CoreMediaUsrLibexecReader {
     }
 
     /// Reads a file through the exact same retained CoreMedia/XPC session used
-    /// for directory enumeration and all configured virtual roots, including iTunes.
+    /// for directory enumeration and all configured virtual roots.
     static func readFileDataUsingSharedSession(atPath path: String, maximumBytes: Int = 64 * 1024 * 1024) throws -> Data {
         let normalized = URL(fileURLWithPath: path).standardizedFileURL.path
         try validateSharedSessionPath(normalized)
         return try withSerializedSession { session in
             try session.readFileData(at: normalized, maximumBytes: maximumBytes)
-        }
-    }
-
-    /// Experimental, create-only write attempt for the iTunes directory. The
-    /// request uses the same CoreMedia Curl/XPC descriptor path as reads; it does
-    /// not call Airlift, WorseQuery, or any local sandbox-extension API.
-    /// O_EXCL is deliberate: this never opens or overwrites an existing file.
-    static func attemptWriteNewITunesFile(atPath path: String, data: Data) throws {
-        let normalized = URL(fileURLWithPath: path).standardizedFileURL.path
-        let iTunesRoot = "/private/var/mobile/Media/iTunes_Control/iTunes"
-        guard normalized.hasPrefix(iTunesRoot + "/"),
-              !normalized.split(separator: "/").contains("..") else {
-            throw CoreMediaReaderError.pathOutsideVirtualRoot
-        }
-        try validateSharedSessionPath(normalized)
-        try withSerializedSession { session in
-            try session.createAndWriteNewFile(at: normalized, data: data)
         }
     }
 
@@ -548,7 +530,6 @@ enum CoreMediaUsrLibexecReader {
         case notRegularFile(String)
         case fileTooLarge(Int64, Int)
         case readFailed(String)
-        case writeAttemptFailed(String, String)
 
         var errorDescription: String? {
             switch self {
@@ -572,8 +553,6 @@ enum CoreMediaUsrLibexecReader {
                 return "File is \(size) bytes; the in-memory preview limit is \(limit) bytes."
             case .readFailed(let path):
                 return "Could not read \(path)."
-            case .writeAttemptFailed(let path, let reason):
-                return "The CoreMedia CVE write attempt failed for \(path): \(reason)"
             }
         }
     }
@@ -842,8 +821,7 @@ enum CoreMediaUsrLibexecReader {
 
         private func openDescriptor(
             for path: String,
-            isDirectory: Bool = false,
-            fileOpenOptions: UInt64 = 0
+            isDirectory: Bool = false
         ) throws -> Int32 {
             // FigXPCMessageSetCFURL receives URL metadata, including the directory
             // bit. Mark directory roots and traversed folders explicitly; passing
@@ -855,7 +833,7 @@ enum CoreMediaUsrLibexecReader {
                 throw CoreMediaReaderError.couldNotOpenPath(path)
             }
             _ = fSetURL(message, "CreationURL", Unmanaged.passUnretained(fileURL).toOpaque())
-            fSetUInt64(message, "FileOpenOptions", fileOpenOptions)
+            fSetUInt64(message, "FileOpenOptions", 0)
             let (reply, replyType) = send(message)
             fRelease(OpaquePointer(message))
 
@@ -1025,52 +1003,6 @@ enum CoreMediaUsrLibexecReader {
                 }
             }
             return DirectoryListingResult(items: items, isComplete: isComplete, directoryItem: directoryItem)
-        }
-
-        /// Requests a new write-only descriptor through the CVE's existing Curl
-        /// create message. Darwin open flags are passed as FileOpenOptions. O_EXCL
-        /// prevents replacement of existing user files if the service accepts it.
-        func createAndWriteNewFile(at path: String, data: Data) throws {
-            let flags = UInt64(Darwin.O_WRONLY | Darwin.O_CREAT | Darwin.O_EXCL)
-            let fd: Int32
-            do {
-                fd = try openDescriptor(for: path, fileOpenOptions: flags)
-            } catch {
-                throw CoreMediaReaderError.writeAttemptFailed(
-                    path,
-                    "CoreMedia did not return a writable descriptor (\(error.localizedDescription))."
-                )
-            }
-            defer { close(fd) }
-
-            do {
-                try data.withUnsafeBytes { rawBuffer in
-                    guard let baseAddress = rawBuffer.baseAddress else {
-                        if data.isEmpty { return }
-                        throw CoreMediaReaderError.writeAttemptFailed(path, "The input buffer is unavailable.")
-                    }
-                    var offset = 0
-                    while offset < rawBuffer.count {
-                        let written = Darwin.write(fd, baseAddress.advanced(by: offset), rawBuffer.count - offset)
-                        if written < 0 {
-                            if errno == EINTR { continue }
-                            let reason = String(cString: strerror(errno))
-                            throw CoreMediaReaderError.writeAttemptFailed(path, reason)
-                        }
-                        guard written > 0 else {
-                            throw CoreMediaReaderError.writeAttemptFailed(path, "The write returned zero bytes.")
-                        }
-                        offset += written
-                    }
-                }
-                if fsync(fd) != 0 {
-                    let reason = String(cString: strerror(errno))
-                    throw CoreMediaReaderError.writeAttemptFailed(path, "The file was opened, but fsync failed: \(reason)")
-                }
-            } catch {
-                if let readerError = error as? CoreMediaReaderError { throw readerError }
-                throw CoreMediaReaderError.writeAttemptFailed(path, error.localizedDescription)
-            }
         }
 
         func readFileData(at path: String, maximumBytes: Int) throws -> Data {
