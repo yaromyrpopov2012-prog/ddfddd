@@ -143,7 +143,7 @@ struct FilePreviewView: View {
     var body: some View {
         Group {
             if usesQuickLookForCurrentType {
-                QuickLookAirliftFallback(url: url)
+                QuickLookDirectPreview(url: url)
             } else if isCAR {
                 CARAssetCatalogPreview(url: url)
             } else if isImage {
@@ -189,7 +189,7 @@ struct FilePreviewView: View {
                     )
                 }
             } else {
-                QuickLookAirliftFallback(url: url)
+                QuickLookDirectPreview(url: url)
             }
         }
         .safeAreaInset(edge: .bottom) {
@@ -697,28 +697,19 @@ private struct HexLineView: View {
     }
 }
 
-private struct QuickLookAirliftFallback: View {
+struct QuickLookDirectPreview: View {
     let url: URL
     @State private var previewURL: URL?
 
     var body: some View {
-        VStack(spacing: 12) {
-            Image(systemName: "doc.text.magnifyingglass")
-                .font(.largeTitle)
-            Text(url.lastPathComponent)
-                .font(.headline)
-                .multilineTextAlignment(.center)
-            Button {
+        Color.clear
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .quickLookPreview($previewURL)
+            .task(id: url) {
+                // Present only after the Quick Look host is attached to the view tree.
+                await Task.yield()
                 previewURL = url
-            } label: {
-                Label("Preview", systemImage: "eye")
             }
-        }
-        .padding()
-        .quickLookPreview($previewURL)
-        .onAppear {
-            previewURL = url
-        }
     }
 }
 
