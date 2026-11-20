@@ -40,6 +40,7 @@ struct AirliftView: View {
     @State private var pairingRefreshTick = 0
     @State private var lastObservedPairPIN: String? = nil
     @State private var deletingRemoteTarget = false
+    @State private var directReadQuickLookURL: URL? = nil
 
     private let ticker = Timer.publish(every: 0.5, on: .main, in: .common).autoconnect()
     // PairingController's PIN is a plain property rather than @Published.
@@ -149,7 +150,12 @@ struct AirliftView: View {
             refreshPairingAvailability()
         }
         .refreshable { refresh(); pairedTick &+= 1 }
-        .sheet(isPresented: $airlift.showReadView) {
+        .sheet(isPresented: Binding(
+            get: { airlift.showReadView && !readFileNeedsDirectQuickLook },
+            set: { isPresented in
+                if !isPresented { airlift.showReadView = false }
+            }
+        )) {
             NavigationStack {
                 if let local = airlift.readViewLocalPath {
                     if airlift.readViewIsFolder {
@@ -172,6 +178,20 @@ struct AirliftView: View {
             }
             .environmentObject(airlift)
         }
+        .onChange(of: airlift.showReadView) { _, isPresented in
+            guard isPresented, readFileNeedsDirectQuickLook,
+                  let local = airlift.readViewLocalPath else { return }
+            let url = URL(fileURLWithPath: local)
+            // Do not present Quick Look from inside the Airlift sheet: that creates
+            // an empty intermediate sheet on iOS. Dismiss the read flag and present
+            // the system preview directly from this screen instead.
+            airlift.showReadView = false
+            Task { @MainActor in
+                await Task.yield()
+                directReadQuickLookURL = url
+            }
+        }
+        .quickLookPreview($directReadQuickLookURL)
         .fileImporter(
             isPresented: $showPairingImporter,
             allowedContentTypes: [.propertyList, .data],
@@ -571,6 +591,12 @@ struct AirliftView: View {
         return !pin.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
 
+    private var readFileNeedsDirectQuickLook: Bool {
+        guard !airlift.readViewIsFolder,
+              let local = airlift.readViewLocalPath else { return false }
+        return !AirliftReadFileView.hasBuiltInViewer(for: URL(fileURLWithPath: local))
+    }
+
     private var pairButtonTitle: String {
         if isPairing {
             return hasLivePairPIN ? (livePairPIN ?? "Pairing…") : "Pairing…"
@@ -585,11 +611,22 @@ private struct AirliftReadFileView: View {
     let localURL: URL
     let remotePath: String
 
+    private static let filePreviewExtensions: Set<String> = [
+        "dylib", "bin", "so", "o", "deb", "png", "jpg", "jpeg", "heic", "heif",
+        "tif", "tiff", "gif", "webp", "svg", "car", "mp4", "mov", "m4v",
+        "mp3", "m4a", "wav", "aiff", "aif", "caf", "flac", "aac"
+    ]
+
+    static func hasBuiltInViewer(for url: URL) -> Bool {
+        filePreviewExtensions.contains(url.pathExtension.lowercased())
+            || conformsToPlistViewer(url)
+            || conformsToTextViewer(url)
+    }
+
     var body: some View {
         Group {
             let ext = localURL.pathExtension.lowercased()
-            let extended = ["dylib", "bin", "so", "o", "png", "jpg", "jpeg", "heic", "heif", "tif", "tiff", "gif", "webp", "mp4", "mov", "m4v", "mp3", "m4a", "wav", "aiff", "aif", "caf", "flac", "aac", "pdf"].contains(ext)
-            if extended {
+            if Self.filePreviewExtensions.contains(ext) {
                 FilePreviewView(url: localURL, remotePath: remotePath, remoteWritable: false)
             } else if conformsToPlistViewer(localURL) {
                 PlistViewer(localURL, remotePath: remotePath)
