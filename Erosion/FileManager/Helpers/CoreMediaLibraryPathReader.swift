@@ -472,7 +472,179 @@ enum CoreMediaLibraryPathReader {
 }
 
 
-/// Routes all read-only CoreMedia virtual paths through one process-wide XPC session.
+/// Full virtual view of iTunes_Control/iTunes. Directory entries and file bytes
+/// use the process-wide CoreMedia bytestream XPC session shared with /usr/libexec.
+enum CoreMediaITunesPathReader {
+    static let rootPath = "/private/var/mobile/Media/iTunes_Control/iTunes"
+
+    static func containsVirtualPath(_ url: URL) -> Bool {
+        containsVirtualPath(url.standardizedFileURL.path)
+    }
+
+    static func containsVirtualPath(_ path: String) -> Bool {
+        let normalized = URL(fileURLWithPath: path).standardizedFileURL.path
+        return normalized == rootPath || normalized.hasPrefix(rootPath + "/")
+    }
+
+    static func isRootPath(_ url: URL) -> Bool {
+        url.standardizedFileURL.path == rootPath
+    }
+
+    static func listDirectory(at url: URL) throws -> [FileItem] {
+        try listDirectory(at: url.standardizedFileURL.path)
+    }
+
+    static func listDirectory(at path: String) throws -> [FileItem] {
+        let normalized = URL(fileURLWithPath: path).standardizedFileURL.path
+        try validate(normalized)
+        let listing = try CoreMediaUsrLibexecReader.listDirectoryUsingSharedSession(
+            at: normalized,
+            probeRegularFiles: true
+        )
+        return listing.items
+    }
+
+    static func infoData(atPath path: String) -> (item: FileItem?, directorySize: Int64?) {
+        let normalized = URL(fileURLWithPath: path).standardizedFileURL.path
+        guard containsVirtualPath(normalized) else { return (nil, nil) }
+
+        if normalized == rootPath {
+            let listing = try? CoreMediaUsrLibexecReader.listDirectoryUsingSharedSession(at: normalized, probeRegularFiles: false)
+            return (listing?.directoryItem ?? CoreMediaUsrLibexecReader.rootFolderItem(
+                at: URL(fileURLWithPath: normalized, isDirectory: true)
+            ), nil)
+        }
+
+        let parent = URL(fileURLWithPath: normalized).deletingLastPathComponent().standardizedFileURL.path
+        let listing = try? CoreMediaUsrLibexecReader.listDirectoryUsingSharedSession(at: parent, probeRegularFiles: false)
+        let item = listing?.items.first {
+            $0.fileURL.standardizedFileURL.path == normalized
+        }
+        return (item, nil)
+    }
+
+    static func canReadDirectory(at url: URL) -> Bool {
+        (try? listDirectory(at: url)) != nil
+    }
+
+    static func isDirectory(at url: URL) -> Bool {
+        if isRootPath(url) { return canReadDirectory(at: url) }
+        return infoData(atPath: url.standardizedFileURL.path).item?.type == .folder
+    }
+
+    static func canReadFile(at url: URL) -> Bool {
+        let normalized = url.standardizedFileURL.path
+        guard containsVirtualPath(normalized) else { return false }
+        let parent = URL(fileURLWithPath: normalized).deletingLastPathComponent().path
+        return (try? CoreMediaUsrLibexecReader.listDirectoryUsingSharedSession(
+            at: parent,
+            probeRegularFiles: true
+        ).items.contains { $0.fileURL.standardizedFileURL.path == normalized && $0.type == .file }) ?? false
+    }
+
+    static func readFileData(atPath path: String, maximumBytes: Int = 64 * 1024 * 1024) throws -> Data {
+        let normalized = URL(fileURLWithPath: path).standardizedFileURL.path
+        try validate(normalized)
+        return try CoreMediaUsrLibexecReader.readFileDataUsingSharedSession(
+            atPath: normalized,
+            maximumBytes: maximumBytes
+        )
+    }
+
+    static func attemptWriteNewFile(atPath path: String, data: Data) throws {
+        let normalized = URL(fileURLWithPath: path).standardizedFileURL.path
+        try validate(normalized)
+        try CoreMediaUsrLibexecReader.attemptWriteNewITunesFile(atPath: normalized, data: data)
+    }
+
+    static func copyDirectoryToLocal(
+        atPath path: String,
+        to destinationURL: URL,
+        bestEffortUnreadableEntries: Bool = false
+    ) throws {
+        let normalized = URL(fileURLWithPath: path).standardizedFileURL.path
+        try validate(normalized)
+        try copyDirectoryToLocal(
+            atPath: normalized,
+            to: destinationURL,
+            depth: 0,
+            bestEffortUnreadableEntries: bestEffortUnreadableEntries
+        )
+    }
+
+    private static func copyDirectoryToLocal(
+        atPath path: String,
+        to destinationURL: URL,
+        depth: Int,
+        bestEffortUnreadableEntries: Bool
+    ) throws {
+        guard depth <= 64 else {
+            if bestEffortUnreadableEntries { return }
+            throw CocoaError(.fileReadTooLarge)
+        }
+        try FileManager.default.createDirectory(at: destinationURL, withIntermediateDirectories: true)
+        let sourceURL = URL(fileURLWithPath: path, isDirectory: true)
+        let listing = try CoreMediaUsrLibexecReader.listDirectoryUsingSharedSession(
+            at: sourceURL.path,
+            probeRegularFiles: true
+        )
+        if !listing.isComplete && !bestEffortUnreadableEntries {
+            throw NSError(
+                domain: "Erosion.CoreMediaITunesPath",
+                code: 5,
+                userInfo: [NSLocalizedDescriptionKey: "The directory could not be read completely."]
+            )
+        }
+        for entry in listing.items {
+            let name = entry.name
+            guard !name.isEmpty, name != ".", name != "..", !name.contains("/") else {
+                if bestEffortUnreadableEntries { continue }
+                throw NSError(domain: "Erosion.CoreMediaITunesPath", code: 4, userInfo: [NSLocalizedDescriptionKey: "The directory contains an invalid entry name."])
+            }
+            let remoteChild = sourceURL.appendingPathComponent(name, isDirectory: entry.type == .folder)
+            let localChild = destinationURL.appendingPathComponent(name, isDirectory: entry.type == .folder)
+            do {
+                switch entry.type {
+                case .folder:
+                    try copyDirectoryToLocal(
+                        atPath: remoteChild.path,
+                        to: localChild,
+                        depth: depth + 1,
+                        bestEffortUnreadableEntries: bestEffortUnreadableEntries
+                    )
+                case .file:
+                    let data = try readFileData(atPath: remoteChild.path)
+                    try data.write(to: localChild, options: .atomic)
+                case .symlink:
+                    try FileManager.default.createSymbolicLink(
+                        atPath: localChild.path,
+                        withDestinationPath: entry.destURL.path
+                    )
+                }
+            } catch {
+                if !bestEffortUnreadableEntries { throw error }
+            }
+        }
+    }
+
+    static func shouldSuggestAppReopen(for error: Error, at path: String) -> Bool {
+        CoreMediaUsrLibexecReader.shouldSuggestAppReopenForSharedSession(for: error, at: path)
+    }
+
+    private static func validate(_ path: String) throws {
+        let components = path.split(separator: "/")
+        guard containsVirtualPath(path), !components.contains("..") else {
+            throw NSError(
+                domain: "Erosion.CoreMediaITunesPath",
+                code: 3,
+                userInfo: [NSLocalizedDescriptionKey: "Path is outside the configured iTunes directory."]
+            )
+        }
+    }
+}
+
+
+/// Routes CoreMedia virtual paths through one process-wide XPC session.
 /// /usr/libexec remains the owner of that session; the Library roots delegate to it.
 enum CoreMediaVirtualSystemPathReader {
     static let reopenAppMessage = CoreMediaUsrLibexecReader.reopenAppMessage
@@ -484,15 +656,17 @@ enum CoreMediaVirtualSystemPathReader {
     static func containsVirtualPath(_ path: String) -> Bool {
         CoreMediaUsrLibexecReader.containsVirtualPath(path)
             || CoreMediaLibraryPathReader.containsVirtualPath(path)
+            || CoreMediaITunesPathReader.containsVirtualPath(path)
     }
 
     static func isRootPath(_ url: URL) -> Bool {
         CoreMediaUsrLibexecReader.isRootPath(url)
             || CoreMediaLibraryPathReader.isRootPath(url)
+            || CoreMediaITunesPathReader.isRootPath(url)
     }
 
     static func rootFolderItem(at url: URL) -> FileItem {
-        if CoreMediaUsrLibexecReader.isRootPath(url) {
+        if CoreMediaUsrLibexecReader.isRootPath(url) || CoreMediaITunesPathReader.isRootPath(url) {
             return CoreMediaUsrLibexecReader.rootFolderItem(at: url)
         }
         return CoreMediaLibraryPathReader.rootFolderItem(at: url)
@@ -503,6 +677,9 @@ enum CoreMediaVirtualSystemPathReader {
     }
 
     static func listDirectory(at path: String) throws -> [FileItem] {
+        if CoreMediaITunesPathReader.containsVirtualPath(path) {
+            return try CoreMediaITunesPathReader.listDirectory(at: path)
+        }
         if CoreMediaUsrLibexecReader.containsVirtualPath(path) {
             return try CoreMediaUsrLibexecReader.listDirectory(at: path)
         }
@@ -510,6 +687,9 @@ enum CoreMediaVirtualSystemPathReader {
     }
 
     static func infoData(atPath path: String) -> (item: FileItem?, directorySize: Int64?) {
+        if CoreMediaITunesPathReader.containsVirtualPath(path) {
+            return CoreMediaITunesPathReader.infoData(atPath: path)
+        }
         if CoreMediaUsrLibexecReader.containsVirtualPath(path) {
             return CoreMediaUsrLibexecReader.infoData(atPath: path)
         }
@@ -517,6 +697,9 @@ enum CoreMediaVirtualSystemPathReader {
     }
 
     static func canReadDirectory(at url: URL) -> Bool {
+        if CoreMediaITunesPathReader.containsVirtualPath(url) {
+            return CoreMediaITunesPathReader.canReadDirectory(at: url)
+        }
         if CoreMediaUsrLibexecReader.containsVirtualPath(url) {
             return CoreMediaUsrLibexecReader.canReadDirectory(at: url)
         }
@@ -524,6 +707,9 @@ enum CoreMediaVirtualSystemPathReader {
     }
 
     static func isDirectory(at url: URL) -> Bool {
+        if CoreMediaITunesPathReader.containsVirtualPath(url) {
+            return CoreMediaITunesPathReader.isDirectory(at: url)
+        }
         if CoreMediaUsrLibexecReader.containsVirtualPath(url) {
             return CoreMediaUsrLibexecReader.isDirectory(at: url)
         }
@@ -531,6 +717,9 @@ enum CoreMediaVirtualSystemPathReader {
     }
 
     static func canReadFile(at url: URL) -> Bool {
+        if CoreMediaITunesPathReader.containsVirtualPath(url) {
+            return false
+        }
         if CoreMediaUsrLibexecReader.containsVirtualPath(url) {
             return CoreMediaUsrLibexecReader.canReadFile(at: url)
         }
@@ -538,6 +727,9 @@ enum CoreMediaVirtualSystemPathReader {
     }
 
     static func readFileData(atPath path: String, maximumBytes: Int = 64 * 1024 * 1024) throws -> Data {
+        if CoreMediaITunesPathReader.containsVirtualPath(path) {
+            return try CoreMediaITunesPathReader.readFileData(atPath: path, maximumBytes: maximumBytes)
+        }
         if CoreMediaUsrLibexecReader.containsVirtualPath(path) {
             return try CoreMediaUsrLibexecReader.readFileData(atPath: path, maximumBytes: maximumBytes)
         }
@@ -549,7 +741,13 @@ enum CoreMediaVirtualSystemPathReader {
         to destinationURL: URL,
         bestEffortUnreadableEntries: Bool = false
     ) throws {
-        if CoreMediaUsrLibexecReader.containsVirtualPath(path) {
+        if CoreMediaITunesPathReader.containsVirtualPath(path) {
+            try CoreMediaITunesPathReader.copyDirectoryToLocal(
+                atPath: path,
+                to: destinationURL,
+                bestEffortUnreadableEntries: bestEffortUnreadableEntries
+            )
+        } else if CoreMediaUsrLibexecReader.containsVirtualPath(path) {
             try CoreMediaUsrLibexecReader.copyDirectoryToLocal(
                 atPath: path,
                 to: destinationURL,
@@ -565,6 +763,9 @@ enum CoreMediaVirtualSystemPathReader {
     }
 
     static func shouldSuggestAppReopen(for error: Error, at url: URL) -> Bool {
+        if CoreMediaITunesPathReader.containsVirtualPath(url) {
+            return CoreMediaITunesPathReader.shouldSuggestAppReopen(for: error, at: url.path)
+        }
         if CoreMediaUsrLibexecReader.containsVirtualPath(url) {
             return CoreMediaUsrLibexecReader.shouldSuggestAppReopen(for: error, at: url)
         }

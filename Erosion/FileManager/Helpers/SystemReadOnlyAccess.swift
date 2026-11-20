@@ -88,6 +88,7 @@ enum SystemReadOnlyAccess {
     /// environment reports a writable POSIX bit. This is an application-level
     /// safety boundary for this viewer.
     static func isReadOnly(_ url: URL) -> Bool {
-        CoreMediaVirtualSystemPathReader.containsVirtualPath(url) || isSystemPath(url)
+        if CoreMediaITunesPathReader.containsVirtualPath(url) { return false }
+        return CoreMediaVirtualSystemPathReader.containsVirtualPath(url) || isSystemPath(url)
     }
 }
