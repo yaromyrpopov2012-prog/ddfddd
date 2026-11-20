@@ -30,6 +30,7 @@ enum FSURL {
     static let usrLibexec = URL(fileURLWithPath: "/usr/libexec", isDirectory: true)
     static let libraryRingtones = URL(fileURLWithPath: "/Library/Ringtones", isDirectory: true)
     static let libraryRegionFeatures = URL(fileURLWithPath: "/Library/RegionFeatures", isDirectory: true)
+    static let iTunesControl = URL(fileURLWithPath: "/private/var/mobile/Media/iTunes_Control/iTunes", isDirectory: true)
     static let bin = URL(fileURLWithPath: "/bin")
     static let sbin = URL(fileURLWithPath: "/sbin")
     static let mobileLibrary = URL(fileURLWithPath: "/var/mobile/Library")
@@ -75,6 +76,7 @@ struct FMRootView: View {
                         NavigationLink("Daemon", destination: FileBrowserView(path: FSURL.usrLibexec, readOnly: true, navigationTitleOverride: "libexec"))
                         NavigationLink("Ringtones", destination: FileBrowserView(path: FSURL.libraryRingtones, readOnly: true, navigationTitleOverride: "Ringtones"))
                         NavigationLink("Regional Features", destination: FileBrowserView(path: FSURL.libraryRegionFeatures, readOnly: true, navigationTitleOverride: "RegionFeatures"))
+                        NavigationLink("iTunes", destination: FileBrowserView(path: FSURL.iTunesControl, readOnly: false, navigationTitleOverride: "iTunes"))
                     } header: {
                         HeaderLabel("CVE-2026-112706", symbol: "folder.badge.gearshape")
                             .foregroundStyle(Color(uiColor: .secondaryLabel))
