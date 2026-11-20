@@ -273,7 +273,7 @@ struct ExperimentalPasscodeView: View {
         let allDigits = digits.flatMap { $0 }
         return LazyVGrid(
             columns: Array(repeating: GridItem(.flexible(), spacing: 10), count: 3),
-            spacing: 16
+            spacing: 11
         ) {
             ForEach(Array(allDigits.enumerated()), id: \.offset) { index, digit in
                 if digit.isEmpty {
