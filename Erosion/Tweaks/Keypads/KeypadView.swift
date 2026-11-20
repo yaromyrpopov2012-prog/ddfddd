@@ -25,7 +25,7 @@ struct KeypadView: View {
     
     var body: some View {
         VStack {
-            LazyVGrid(columns: columns, alignment: .center, spacing: 16) {
+            LazyVGrid(columns: columns, alignment: .center, spacing: 11) {
                 ForEach($kpMgr.mpKeypad) { $item in
                     KeyItem(size: $size, kpID: item.kpID, imgData: $item.imgData)
                         .environmentObject(kpMgr)
