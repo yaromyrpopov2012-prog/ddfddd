@@ -174,6 +174,10 @@ struct FileRow: View {
         CoreMediaVirtualSystemPathReader.containsVirtualPath(file.fileURL)
     }
 
+    private var isCVEITunesFile: Bool {
+        CoreMediaITunesPathReader.containsVirtualPath(file.fileURL)
+    }
+
     /// Materializes a read-only CoreMedia file into the app's temporary directory,
     /// then routes it through Erosion's existing generic viewers.
     @MainActor
@@ -431,7 +435,7 @@ struct FileRow: View {
                 Label("Get Info", systemImage: "info.circle")
             }
 
-            if file.type == .file && !readOnly {
+            if file.type == .file && !readOnly && !isCVEITunesFile {
                 Button {
                     Alertinator.shared.prompt(title: "What would you like to call this file?", placeholder: file.name, completion: { result in
                         if let name = result {
@@ -488,7 +492,7 @@ struct FileRow: View {
                 }
             }
 
-            if file.type == .file && !readOnly {
+            if file.type == .file && !readOnly && !isCVEITunesFile {
                 if isZipFile {
                     Button {
                         uncompressFileAndSync()
@@ -504,7 +508,7 @@ struct FileRow: View {
                 }
             }
 
-            if file.type == .file && !readOnly {
+            if file.type == .file && !readOnly && !isCVEITunesFile {
                 Button {
                     duplicateFileAndSync()
                 } label: {
@@ -543,7 +547,7 @@ struct FileRow: View {
 
             Divider()
 
-            if !readOnly {
+            if !readOnly && !isCVEITunesFile {
                 Button(role: .destructive) {
                     deleteFileAndSync()
                 } label: {

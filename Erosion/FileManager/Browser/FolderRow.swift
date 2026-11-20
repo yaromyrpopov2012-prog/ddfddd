@@ -33,6 +33,10 @@ struct FolderRow: View {
         airliftRemotePath != nil && airliftRemoteRoot != nil && airliftLocalRoot != nil
     }
 
+    private var isCVEITunesFolder: Bool {
+        CoreMediaITunesPathReader.containsVirtualPath(file.fileURL)
+    }
+
     private func remoteMutationAllowed() -> Bool {
         AirliftBridge.shared.fileBrowserWriteReady()
     }
@@ -99,7 +103,7 @@ struct FolderRow: View {
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .contentShape(Rectangle())
                 .contextMenu {
-                    if !readOnly && !isContainer {
+                    if !readOnly && !isContainer && !isCVEITunesFolder {
                         Button {
                         Alertinator.shared.prompt(title: "What would you like to call this folder?", placeholder: file.name) { result in
                             guard let name = result, !name.isEmpty else { return }
@@ -153,7 +157,7 @@ struct FolderRow: View {
                         }
                     }
 
-                    if readOnly {
+                    if isCVEITunesFolder || readOnly {
                         Button {
                             let sourceURL = file.fileURL
                             Task { @MainActor in
@@ -227,7 +231,7 @@ struct FolderRow: View {
                         Label("Get Info", systemImage: "info.circle")
                     }
 
-                    if !readOnly && !isContainer {
+                    if !readOnly && !isContainer && !isCVEITunesFolder {
                         Button(role: .destructive) {
                             guard !isAirliftRemote || remoteMutationAllowed() else {
                                 Alertinator.shared.alert(title: "Airlift write unavailable", body: "Enable LocalDevVPN and make sure the pairing file is imported.")
